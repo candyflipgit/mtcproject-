@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"from data_generator import generate_data; from model import train_models, predict; df = generate_data\\(\\); r = train_models\\(df\\); p = predict\\(r, 15, 3, 50, 2.4\\); print\\('Data OK:', len\\(df\\), 'rows'\\); print\\('R2 linear:', round\\(r['linear']['r2'],4\\)\\); print\\('R2 poly:', round\\(r['poly']['r2'],4\\)\\); print\\('Prediction:', p\\)\")",
+      "Bash(python -c ' *)",
+      "Bash(git init *)",
+      "Bash(git add *)",
+      "Bash(git commit *)"
+    ]
+  }
+}

@@ -340,6 +340,15 @@ function speedTrend(samples){
   return range>0?Math.max(-1,Math.min(1,slope/range*samples.length)):0;
 }
 
+// Remove outliers: keep values within [0.1×median, 4×median]
+function cleanSamples(arr){
+  if(arr.length<3)return arr;
+  const sorted=[...arr].sort((a,b)=>a-b);
+  const med=sorted[Math.floor(sorted.length/2)];
+  if(med<=0)return arr;
+  return arr.filter(v=>v>=med*0.1&&v<=med*4);
+}
+
 // ── ML prediction ──────────────────────────────────────────────────────────────
 function predictEffective(featArr){
   const scaled=featArr.map((v,i)=>(v-MEANS[i])/STDS[i]);
@@ -425,9 +434,10 @@ function drawScatter(canvasId,pairs,color='#33aaff'){
 }
 
 // ── Speed test core ─────────────────────────────────────────────────────────────
-const CF_TINY = 'https://speed.cloudflare.com/__down?bytes=100&r=';
-const CF_DOWN = 'https://speed.cloudflare.com/__down?bytes=30000000&r=';
-const CF_UP   = 'https://speed.cloudflare.com/__up';
+const CF_TINY  = 'https://speed.cloudflare.com/__down?bytes=100&r=';
+const CF_SMALL = 'https://speed.cloudflare.com/__down?bytes=3000000&r=';
+const CF_DOWN  = 'https://speed.cloudflare.com/__down?bytes=50000000&r=';
+const CF_UP    = 'https://speed.cloudflare.com/__up';
 
 async function measurePing(){
   const times=[];
@@ -451,7 +461,7 @@ async function measureDownload(onProgress){
   const reader=resp.body.getReader();
   let loaded=0;
   const t0=performance.now();
-  let lastPing=t0-4500;
+  let lastPing=t0-1200; // fire first loaded-ping after 1.2s
 
   while(true){
     const{done,value}=await reader.read();
@@ -459,23 +469,45 @@ async function measureDownload(onProgress){
     loaded+=value.length;
     const now=performance.now();
     const elapsed=(now-t0)/1000;
+    // Skip first 0.5s warmup — avoids the near-zero division spike
+    if(elapsed<0.5){onProgress(0,elapsed);continue;}
     const spd=loaded*8/elapsed/1e6;
     speedSamples.push(parseFloat(spd.toFixed(2)));
     onProgress(spd,elapsed);
-    // async loaded-ping every 4s
-    if(now-lastPing>4000){
+    // Async loaded-ping every 1.5s
+    if(now-lastPing>1500){
       lastPing=now;
       const pt0=performance.now();
-      const curLoaded=loaded,curElap=elapsed;
+      const snapLoaded=loaded,snapElap=elapsed;
       fetch(CF_TINY+Math.random(),{cache:'no-store'}).then(()=>{
         const pms=performance.now()-pt0;
-        const spd2=curLoaded*8/curElap/1e6;
+        const spd2=snapLoaded*8/snapElap/1e6;
         loadedPingPairs.push({x:parseFloat(pms.toFixed(1)),y:parseFloat(spd2.toFixed(2))});
       });
     }
   }
   const elapsed=(performance.now()-t0)/1000;
   return loaded*8/elapsed/1e6;
+}
+
+// Fallback: run 5 short parallel (download + ping) rounds for correlation data
+async function gatherCorrelationData(){
+  for(let i=0;i<5;i++){
+    const t0=performance.now();
+    let pingMs=0;
+    const pingP=fetch(CF_TINY+Math.random(),{cache:'no-store'})
+      .then(()=>{pingMs=performance.now()-t0;});
+    const dlP=fetch(CF_SMALL+Math.random(),{cache:'no-store'})
+      .then(r=>r.arrayBuffer())
+      .then(buf=>{
+        const elapsed=(performance.now()-t0)/1000;
+        return buf.byteLength*8/elapsed/1e6;
+      }).catch(()=>0);
+    const[,speed]=await Promise.all([pingP,dlP]);
+    if(pingMs>0&&speed>0)
+      loadedPingPairs.push({x:parseFloat(pingMs.toFixed(1)),y:parseFloat(speed.toFixed(2))});
+    await sleep(300);
+  }
 }
 
 async function measureUpload(onProgress){
@@ -492,7 +524,11 @@ async function measureUpload(onProgress){
 
 // ── Render results ─────────────────────────────────────────────────────────────
 function renderResults(dlMbps,ulMbps,pingAvg,pingJitter,device,ispName){
-  const stability=Math.max(0,Math.min(1,1-std(speedSamples)/mean(speedSamples)));
+  // Clean outliers before computing stability
+  const clean=cleanSamples(speedSamples);
+  const stability=clean.length>1
+    ?Math.max(0,Math.min(1,1-std(clean)/mean(clean)))
+    :0.85; // fallback if too few samples
   const dlUlRatio=dlMbps/Math.max(ulMbps,0.1);
   const trend=speedTrend(speedSamples);
   const cs=connScore(device.connType,dlMbps);
@@ -528,13 +564,14 @@ function renderResults(dlMbps,ulMbps,pingAvg,pingJitter,device,ispName){
   const effMbps=Math.min(predictEffective(featVals),dlMbps*0.99);
   const effPct=(effMbps/dlMbps*100).toFixed(1);
 
-  // Charts
-  drawLine('chart-speed',speedSamples,'#5533ff');
+  // Charts — use cleaned samples for display
+  drawLine('chart-speed',clean.length>2?clean:speedSamples,'#5533ff');
   drawScatter('chart-corr',loadedPingPairs,'#33aaff');
 
   // Stability stat
+  const peak=clean.length>0?Math.max(...clean):Math.max(...speedSamples);
   $('stab-stat').innerHTML='Stability: <span>'+(stability*100).toFixed(1)+'%</span>'
-    +' &nbsp;|&nbsp; Peak: <span>'+Math.max(...speedSamples).toFixed(1)+' Mbps</span>';
+    +' &nbsp;|&nbsp; Peak: <span>'+peak.toFixed(1)+' Mbps</span>';
 
   // Correlation stat
   const r=pearsonR(loadedPingPairs.map(p=>p.x),loadedPingPairs.map(p=>p.y));
@@ -652,6 +689,12 @@ async function startTest(){
     }catch(_){ulMbps=dlMbps*0.25;}
     $('m-ul').textContent=ulMbps.toFixed(1)+' Mbps';
     dot('ul','done');prog(90);await sleep(250);
+
+    // ── Correlation fallback (for fast connections) ────────────────────────────
+    if(loadedPingPairs.length<2){
+      dot('done','active');$('phase-lbl').textContent='CORRELATION…';
+      await gatherCorrelationData();
+    }
 
     // ── ML Analysis ───────────────────────────────────────────────────────────
     dot('done','active');$('phase-lbl').textContent='ANALYSING…';

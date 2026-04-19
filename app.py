@@ -9,19 +9,29 @@ matplotlib.use("Agg")
 from data_generator import generate_data
 from model import train_models, predict
 from speedtest_component import get_speedtest_html
+from network_model import train_throughput_model
 
 st.set_page_config(page_title="Mini ML Model – MTC Project 10", layout="wide")
 
-# ── Pre-compute model once ─────────────────────────────────────────────────────
+# ── Pre-compute models once ────────────────────────────────────────────────────
 @st.cache_resource
-def load_model():
-    df = generate_data()
-    results = train_models(df)
-    return df, results
+def load_models():
+    df   = generate_data()
+    res  = train_models(df)
+    tput = train_throughput_model()       # 10-feature effective throughput model
+    return df, res, tput
 
-df, results = load_model()
-coef = results['linear']['model'].coef_.tolist()
+df, results, tput = load_models()
+
+# BER model coefficients (for manual predictor tab)
+coef      = results['linear']['model'].coef_.tolist()
 intercept = float(results['linear']['model'].intercept_)
+
+# Throughput model coefficients (for speed test JS)
+t_coef      = tput['coef']
+t_intercept = tput['intercept']
+t_means     = tput['scaler_mean']
+t_stds      = tput['scaler_std']
 
 # ── Header ─────────────────────────────────────────────────────────────────────
 st.title("Mini ML Model using Linear Algebra & Statistics")
@@ -39,7 +49,10 @@ Runs entirely in your **browser** — measures your device's actual download spe
 using Cloudflare's speed endpoints. Results are fed into the **ML regression model** to estimate
 channel quality metrics (SNR, BER, TX Power).
 """)
-    components.html(get_speedtest_html(coef, intercept), height=780, scrolling=False)
+    components.html(
+        get_speedtest_html(t_coef, t_intercept, t_means, t_stds),
+        height=1020, scrolling=True
+    )
 
 # ── Tab: Dataset ───────────────────────────────────────────────────────────────
 with tab_data:

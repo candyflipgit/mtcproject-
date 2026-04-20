@@ -533,8 +533,14 @@ function renderResults(dlMbps,ulMbps,pingAvg,pingJitter,device,ispName){
   const stability=steadySamples.length>1
     ?Math.max(0,Math.min(1,1-std(steadySamples)/mean(steadySamples)))
     :0.85;
-  const dlUlRatio=dlMbps/Math.max(ulMbps,0.1);
-  const trend=speedTrend(speedSamples);
+  // Always >= 1: upload-dominant (fibre symmetric) treated as ratio=1.0 for the model.
+  // Training data now covers 0.5-20; values below 1 are valid but rare.
+  const dlUlRatioRaw=dlMbps/Math.max(ulMbps,0.1);
+  const dlUlRatio=Math.max(0.5,dlUlRatioRaw);   // keep display value; model clips same way
+  // Clamp speed trend: very negative trend (-0.8+) is a TCP ramp-down artefact,
+  // not a real channel quality signal — cap its effect at ±0.5 for model input.
+  const trendRaw=speedTrend(speedSamples);
+  const trend=Math.max(-0.5,Math.min(0.5,trendRaw));
   const cs=connScore(device.connType,dlMbps);
   const ghz=inferGHz(dlMbps,device.connType);
 
@@ -557,8 +563,8 @@ function renderResults(dlMbps,ulMbps,pingAvg,pingJitter,device,ispName){
     pingAvg.toFixed(1)+' ms',
     pingJitter.toFixed(1)+' ms',
     ulMbps.toFixed(1)+' Mbps',
-    dlUlRatio.toFixed(2)+'x',
-    (trend>=0?'+':'')+trend.toFixed(2),
+    dlUlRatioRaw.toFixed(2)+'x',
+    (trendRaw>=0?'+':'')+trendRaw.toFixed(2),
     device.ram+' GB',
     device.cores,
     cs.toFixed(1)+' ('+ghz+')'

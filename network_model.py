@@ -42,9 +42,10 @@ def generate_network_data(n=1200, seed=42):
     # Upload can be very asymmetric (e.g., ADSL, mobile data) → ratio up to 20x
     asym_mask   = np.random.random(n) < 0.35          # 35% very asymmetric
     ul_asym     = np.random.uniform(0.05, 0.15, n)    # ADSL/mobile: 5–15% of download
-    ul_norm     = np.random.uniform(0.15, 0.85, n)    # typical broadband: 15–85%
+    ul_norm     = np.random.uniform(0.15, 1.50, n)    # broadband to symmetric/upload-dominant fibre
     ul_ratio    = np.where(asym_mask, ul_asym, ul_norm)
-    upload      = np.clip(avg_dl * ul_ratio, 0.3, 400)
+    upload      = np.clip(avg_dl * ul_ratio, 0.3, 600)
+    # ratio < 1 means upload > download (symmetric fibre); clip floor at 0.5
     dl_ul_ratio = np.clip(avg_dl / np.maximum(upload, 0.1), 0.5, 20)
 
     speed_trend = np.random.uniform(-1, 1, n)

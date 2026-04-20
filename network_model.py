@@ -24,10 +24,23 @@ def generate_network_data(n=800, seed=42):
     avg_dl      = np.clip(np.random.exponential(45, n), 1, 300)
     dl_std      = avg_dl * np.random.uniform(0.03, 0.45, n)
     dl_stab     = np.clip(1 - dl_std / avg_dl, 0.05, 0.99)
-    avg_ping    = np.clip(np.random.exponential(28, n), 2, 350)
-    ping_jitter = np.clip(avg_ping * np.random.uniform(0.05, 0.6, n), 0.5, 80)
-    upload      = np.clip(avg_dl * np.random.uniform(0.08, 0.85, n), 0.3, 200)
+
+    # Bimodal ping: 55% fast (5–60ms), 45% slow (60–350ms) — covers real-world range
+    fast_ping   = np.random.uniform(5, 60, n)
+    slow_ping   = np.random.uniform(60, 350, n)
+    avg_ping    = np.where(np.random.random(n) < 0.55, fast_ping, slow_ping)
+    avg_ping    = np.clip(avg_ping, 2, 350)
+
+    ping_jitter = np.clip(avg_ping * np.random.uniform(0.05, 0.4, n), 0.5, 80)
+
+    # Upload can be very asymmetric (e.g., ADSL, mobile data) → ratio up to 20x
+    asym_mask   = np.random.random(n) < 0.35          # 35% very asymmetric
+    ul_asym     = np.random.uniform(0.05, 0.15, n)    # ADSL/mobile: 5–15% of download
+    ul_norm     = np.random.uniform(0.15, 0.85, n)    # typical broadband: 15–85%
+    ul_ratio    = np.where(asym_mask, ul_asym, ul_norm)
+    upload      = np.clip(avg_dl * ul_ratio, 0.3, 200)
     dl_ul_ratio = np.clip(avg_dl / np.maximum(upload, 0.1), 0.5, 20)
+
     speed_trend = np.random.uniform(-1, 1, n)
     device_mem  = np.random.choice([1,2,4,8,16], n,
                                     p=[0.05,0.1,0.3,0.4,0.15]).astype(float)

@@ -353,7 +353,8 @@ function cleanSamples(arr){
 function predictEffective(featArr){
   const scaled=featArr.map((v,i)=>(v-MEANS[i])/STDS[i]);
   const p=INTERCEPT+scaled.reduce((s,v,i)=>s+v*COEF[i],0);
-  return Math.max(0,p);
+  const floor=featArr[0]*0.30;  // at least 30% of raw download (guards against extrapolation)
+  return Math.max(floor,p);
 }
 
 // ── Canvas charts ──────────────────────────────────────────────────────────────

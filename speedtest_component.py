@@ -524,11 +524,14 @@ async function measureUpload(onProgress){
 
 // ── Render results ─────────────────────────────────────────────────────────────
 function renderResults(dlMbps,ulMbps,pingAvg,pingJitter,device,ispName){
-  // Clean outliers before computing stability
+  // Clean outliers first
   const clean=cleanSamples(speedSamples);
-  const stability=clean.length>1
-    ?Math.max(0,Math.min(1,1-std(clean)/mean(clean)))
-    :0.85; // fallback if too few samples
+  // Use only the last 60% of samples (steady-state phase, after TCP ramp-up)
+  // This avoids counting the slow-start period as "instability"
+  const steadySamples=clean.length>4?clean.slice(Math.floor(clean.length*0.4)):clean;
+  const stability=steadySamples.length>1
+    ?Math.max(0,Math.min(1,1-std(steadySamples)/mean(steadySamples)))
+    :0.85;
   const dlUlRatio=dlMbps/Math.max(ulMbps,0.1);
   const trend=speedTrend(speedSamples);
   const cs=connScore(device.connType,dlMbps);

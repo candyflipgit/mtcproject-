@@ -36,16 +36,30 @@ def generate_network_data(n=800, seed=42):
     conn_score  = np.random.choice([0.3,0.6,0.8,1.0], n,
                                     p=[0.20,0.30,0.30,0.20])
 
-    # Effective throughput: physics-inspired model
-    # TCP throughput ≈ window_size / RTT; stability and jitter cause retransmission
-    ping_factor   = np.exp(-avg_ping / 180)
-    jitter_factor = 1 - np.clip(ping_jitter / 120, 0, 0.35)
-    device_factor = 0.78 + 0.22 * (device_mem / 16) * (np.log2(cpu_cores) / 4)
+    # Effective throughput: realistic model
+    # Real-world efficiency is 60–95% of raw speed for decent connections.
+    # Each factor contributes a bounded penalty — no single factor can collapse
+    # the prediction (avoids the multiplicative-chain problem).
 
-    effective = (avg_dl * dl_stab * ping_factor * jitter_factor
-                 * device_factor * conn_score * (1 + speed_trend * 0.04))
-    noise = np.random.normal(0, avg_dl * 0.02, n)
-    effective = np.clip(effective + noise, 0.1, avg_dl * 0.99)
+    # Ping penalty: RTT affects TCP window; mild for <100ms, significant above
+    ping_factor   = np.exp(-avg_ping / 220)                              # 10ms→0.956, 50ms→0.797, 200ms→0.402
+
+    # Jitter penalty: small effect — retransmissions are rare on modern networks
+    jitter_factor = 1 - np.clip(ping_jitter / 600, 0, 0.15)             # max 15% penalty
+
+    # Stability: floor at 65% so even variable connections get credit
+    stab_factor   = 0.65 + 0.35 * dl_stab                               # range: 0.65–1.00
+
+    # Device factor: modest range — modern hardware rarely bottlenecks <1 Gbps
+    device_factor = 0.88 + 0.12 * (device_mem / 16) * (np.log2(np.maximum(cpu_cores, 1)) / 4)
+
+    # Connection type: WiFi overhead vs ethernet
+    conn_factor   = 0.82 + 0.18 * conn_score                            # 0.3→0.874, 0.8→0.964, 1.0→1.0
+
+    effective = (avg_dl * stab_factor * ping_factor * jitter_factor
+                 * device_factor * conn_factor * (1 + speed_trend * 0.03))
+    noise = np.random.normal(0, avg_dl * 0.015, n)
+    effective = np.clip(effective + noise, 0.1, avg_dl * 0.98)
 
     return pd.DataFrame({
         'avg_download_mbps':     avg_dl,

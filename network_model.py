@@ -18,11 +18,17 @@ FEATURES = [
     'connection_type_score' # 0.3=cellular, 0.6=wifi2.4, 0.8=wifi5, 1.0=ethernet
 ]
 
-def generate_network_data(n=800, seed=42):
+def generate_network_data(n=1200, seed=42):
     np.random.seed(seed)
 
-    avg_dl      = np.clip(np.random.exponential(45, n), 1, 300)
-    dl_std      = avg_dl * np.random.uniform(0.03, 0.45, n)
+    # Bimodal download: 45% slow-mid (5–100 Mbps), 55% fast (80–500 Mbps)
+    # Ensures the linear model is well-trained across the full real-world range
+    slow_dl     = np.random.uniform(5, 100, n)
+    fast_dl     = np.random.uniform(80, 500, n)
+    avg_dl      = np.where(np.random.random(n) < 0.45, slow_dl, fast_dl)
+    avg_dl      = np.clip(avg_dl, 1, 500)
+
+    dl_std      = avg_dl * np.random.uniform(0.03, 0.40, n)
     dl_stab     = np.clip(1 - dl_std / avg_dl, 0.05, 0.99)
 
     # Bimodal ping: 55% fast (5–60ms), 45% slow (60–350ms) — covers real-world range
@@ -38,7 +44,7 @@ def generate_network_data(n=800, seed=42):
     ul_asym     = np.random.uniform(0.05, 0.15, n)    # ADSL/mobile: 5–15% of download
     ul_norm     = np.random.uniform(0.15, 0.85, n)    # typical broadband: 15–85%
     ul_ratio    = np.where(asym_mask, ul_asym, ul_norm)
-    upload      = np.clip(avg_dl * ul_ratio, 0.3, 200)
+    upload      = np.clip(avg_dl * ul_ratio, 0.3, 400)
     dl_ul_ratio = np.clip(avg_dl / np.maximum(upload, 0.1), 0.5, 20)
 
     speed_trend = np.random.uniform(-1, 1, n)
@@ -49,29 +55,27 @@ def generate_network_data(n=800, seed=42):
     conn_score  = np.random.choice([0.3,0.6,0.8,1.0], n,
                                     p=[0.20,0.30,0.30,0.20])
 
-    # Effective throughput: realistic model
-    # Real-world efficiency is 60–95% of raw speed for decent connections.
-    # Each factor contributes a bounded penalty — no single factor can collapse
-    # the prediction (avoids the multiplicative-chain problem).
+    # Effective throughput: tuned so good connections hit 75–85% efficiency.
+    # Each factor has a generous floor — no single parameter can collapse output.
 
-    # Ping penalty: RTT affects TCP window; mild for <100ms, significant above
-    ping_factor   = np.exp(-avg_ping / 220)                              # 10ms→0.956, 50ms→0.797, 200ms→0.402
+    # Ping penalty: gentle curve; 30ms→0.928, 80ms→0.819, 200ms→0.607
+    ping_factor   = np.exp(-avg_ping / 400)
 
-    # Jitter penalty: small effect — retransmissions are rare on modern networks
-    jitter_factor = 1 - np.clip(ping_jitter / 600, 0, 0.15)             # max 15% penalty
+    # Jitter penalty: minor — TCP SACK handles retransmits efficiently; max 8% drag
+    jitter_factor = 1 - np.clip(ping_jitter / 1000, 0, 0.08)
 
-    # Stability: floor at 65% so even variable connections get credit
-    stab_factor   = 0.65 + 0.35 * dl_stab                               # range: 0.65–1.00
+    # Stability: floor at 75% — real-world connections rarely drop below this
+    stab_factor   = 0.75 + 0.25 * dl_stab                               # range: 0.75–1.00
 
-    # Device factor: modest range — modern hardware rarely bottlenecks <1 Gbps
-    device_factor = 0.88 + 0.12 * (device_mem / 16) * (np.log2(np.maximum(cpu_cores, 1)) / 4)
+    # Device factor: narrow range — hardware rarely bottlenecks <1 Gbps
+    device_factor = 0.91 + 0.09 * (device_mem / 16) * (np.log2(np.maximum(cpu_cores, 1)) / 4)
 
-    # Connection type: WiFi overhead vs ethernet
-    conn_factor   = 0.82 + 0.18 * conn_score                            # 0.3→0.874, 0.8→0.964, 1.0→1.0
+    # Connection type: overhead penalty; ethernet→1.0, wifi5→0.956, wifi2.4→0.929, cell→0.885
+    conn_factor   = 0.855 + 0.145 * conn_score
 
     effective = (avg_dl * stab_factor * ping_factor * jitter_factor
                  * device_factor * conn_factor * (1 + speed_trend * 0.03))
-    noise = np.random.normal(0, avg_dl * 0.015, n)
+    noise = np.random.normal(0, avg_dl * 0.012, n)
     effective = np.clip(effective + noise, 0.1, avg_dl * 0.98)
 
     return pd.DataFrame({
